@@ -118,27 +118,36 @@ FROM gtfs_2015.dist_travel AS dist_travel
 -- Create the view for stop_id matching the intersection_id
 CREATE OR REPLACE VIEW gtfs_2015.stop_intersection AS
 SELECT s.stop_id,
-  (SELECT i.id
+  (SELECT i.intersection_id
    FROM street.intersection as i
-   ORDER BY s.geom <#> i.shape LIMIT 1) AS int_id
+   ORDER BY s.geom <#> i.shape LIMIT 1) AS intersection_id
 FROM gtfs_2015.stops AS s;
 
-
--- Create the view for matching shape to closet intersection
-WITH unique_int AS (
-	SELECT DISTINCT ON (int_id)
+-- Create view for matching shape based on closet intersection
+SELECT DISTINCT ON (intersection_id)
 		s.shape_id,
 		(SELECT
-		   i.id
+		   i.intersection_id
 		   FROM street.intersection as i
 		   ORDER BY s.geom <#> i.shape LIMIT 1
-	   )::text AS int_id,
-	   s.shape_pt_sequence AS seq
+	   )::text AS intersection_id,
+	   s.shape_pt_sequence AS intersection_seq
 	FROM gtfs_2015.shapes AS s
-	WHERE s.shape_id = '100N')
-SELECT string_agg(int_id, ', ')
-FROM unique_int
-ORDER BY seq;
+	WHERE s.shape_id = '100N'
+
+-- Create the view for matching shape based on street
+SELECT
+	shapes.shape_id,
+	(SELECT
+	   segment.segment_id
+	   FROM street.segment as segment
+	   ORDER BY shapes.geom <#> segment.geom LIMIT 1
+   )::text AS segment_id,
+   min(shapes.shape_pt_sequence) AS segment_sequence
+FROM gtfs_2015.shapes AS shapes
+WHERE shapes.shape_id = '100N'
+GROUP BY shape_id, segment_id
+ORDER BY segment_sequence
 
 
 -- Create a list of nodes that the bus route goes through
