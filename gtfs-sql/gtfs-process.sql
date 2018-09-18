@@ -9,8 +9,9 @@ FROM gtfs_2015.routes r
         r.route_id NOT LIKE '%WEEKEND' AND
         r.route_id NOT LIKE '%EVENING' AND
         r.route_id NOT LIKE '%NIGHT' AND
-        r.route_id NOT LIKE '%PM')
-GROUP BY r.route_id, r.route_short_name HAVING count(t.service_id) > 50;
+        r.route_id NOT LIKE '%PM' AND
+		r.route_id NOT LIKE '%LIMITED')
+GROUP BY r.route_id, r.route_short_name HAVING count(t.service_id) > 20;
 
 
 -- Create view for head-time during peak hours 06-07-08
@@ -90,7 +91,7 @@ CREATE OR REPLACE VIEW gtfs_2015.dist_travel AS (
     RIGHT OUTER JOIN gtfs_2015.common_routes AS routes
         ON routes.route_id = trips.route_id
     GROUP BY routes.route_id)
-
+------------------------------------------------------
 CREATE OR REPLACE VIEW gtfs_2015.dist_travel AS
 SELECT route_shape.route_id,
 	l.shape_len
@@ -347,7 +348,7 @@ ORDER BY shape_count) AS ordered
 -- FINAL TABLE
 SELECT
 	common_routes.route_id AS line_name,
-	common_routes.route_short_name || '-' || node_string.direction_id AS long_name,
+	common_routes.route_id || '-' || common_routes.route_short_name || '-' || node_string.direction_id AS long_name,
 	1 AS mode,
 	1 AS operator,
 	1 AS vehicle_type,
