@@ -355,9 +355,12 @@ SELECT
 	'F' AS circular,
 	EXTRACT (MINUTE FROM hw_peak.avg_head_time) AS headway_1,
 	EXTRACT (MINUTE FROM hw_non_peak.avg_head_time) AS headway_2,
+	EXTRACT (MINUTE FROM run_time.avg) AS run_time,
 	round(xy_speed.xy_speed::numeric, 0) AS xy_speed,
 	node_string.nodes_agg
 FROM gtfs_2015.common_routes AS common_routes
+JOIN gtfs_2015.run_time AS run_time
+	ON run_time.route_id = common_routes.route_id
 JOIN gtfs_2015.headway_peak_avg AS hw_peak
 	ON hw_peak.route_id = common_routes.route_id
 JOIN gtfs_2015.headway_non_peak_avg AS hw_non_peak
