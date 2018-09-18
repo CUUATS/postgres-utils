@@ -60,6 +60,12 @@ WITH run_time AS (
         ON trips.trip_id = stop_times.trip_id
     RIGHT OUTER JOIN gtfs_2015.common_routes AS routes
         ON routes.route_id = trips.route_id
+	WHERE (stop_times.arrival_time LIKE '%12'
+		OR stop_times.arrival_time LIKE '13%'
+		OR stop_times.arrival_time LIKE '14%'
+		OR stop_times.arrival_time LIKE '06%'
+		OR stop_times.arrival_time LIKE '07%'
+		OR stop_times.arrival_time LIKE '08%')
     GROUP BY routes.route_id, trips.trip_id
     HAVING max(arrival_time::interval) - min(arrival_time::interval) > '00:05:00'
 )
@@ -68,22 +74,22 @@ FROM run_time
 GROUP BY route_id
 
 -- Create a view for the distance travel for each route based on the common routes and peak and non-peak trip
--- CREATE OR REPLACE VIEW gtfs_2015.dist_travel AS (
---     SELECT routes.route_id, avg(shape_dist_traveled) AS dist_travel
---     FROM gtfs_2015.shapes AS shapes
---     JOIN gtfs_2015.trips AS trips
---         ON trips.shape_id = shapes.shape_id
---     RIGHT OUTER JOIN gtfs_2015.stop_times AS stop_times
---         ON stop_times.trip_id = trips.trip_id
---             AND (stop_times.arrival_time LIKE '%12'
---                 OR stop_times.arrival_time LIKE '13%'
---                 OR stop_times.arrival_time LIKE '14%'
---                 OR stop_times.arrival_time LIKE '06%'
---         		OR stop_times.arrival_time LIKE '07%'
---         	  	OR stop_times.arrival_time LIKE '08%')
---     RIGHT OUTER JOIN gtfs_2015.common_routes AS routes
---         ON routes.route_id = trips.route_id
---     GROUP BY routes.route_id)
+CREATE OR REPLACE VIEW gtfs_2015.dist_travel AS (
+    SELECT routes.route_id, avg(shape_dist_traveled) AS dist_travel
+    FROM gtfs_2015.shapes AS shapes
+    JOIN gtfs_2015.trips AS trips
+        ON trips.shape_id = shapes.shape_id
+    RIGHT OUTER JOIN gtfs_2015.stop_times AS stop_times
+        ON stop_times.trip_id = trips.trip_id
+            AND (stop_times.arrival_time LIKE '%12'
+                OR stop_times.arrival_time LIKE '13%'
+                OR stop_times.arrival_time LIKE '14%'
+                OR stop_times.arrival_time LIKE '06%'
+        		OR stop_times.arrival_time LIKE '07%'
+        	  	OR stop_times.arrival_time LIKE '08%')
+    RIGHT OUTER JOIN gtfs_2015.common_routes AS routes
+        ON routes.route_id = trips.route_id
+    GROUP BY routes.route_id)
 
 CREATE OR REPLACE VIEW gtfs_2015.dist_travel AS
 SELECT route_shape.route_id,
@@ -124,7 +130,7 @@ RETURNS NULL ON NULL INPUT
 -- Create XY speed based on distance travel and run_time
 CREATE MATERIALIZED VIEW gtfs_2015.xy_speed AS
 SELECT dist_travel.route_id,
-   calc_speed(dist_travel.dist_travel * .00018939, conv_inter_float(run_time.avg)) AS xy_speed
+   calc_speed(dist_travel.dist_travel * 0.00062137, conv_inter_float(run_time.avg)) AS xy_speed
 FROM gtfs_2015.dist_travel AS dist_travel
     JOIN gtfs_2015.run_time AS run_time
         ON dist_travel.route_id = run_time.route_id
