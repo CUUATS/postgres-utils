@@ -1,6 +1,10 @@
 -- Create a view for the common routes to include in query
+DROP VIEW gtfs_2015.common_routes CASCADE;
 CREATE OR REPLACE VIEW gtfs_2015.common_routes AS
-SELECT r.route_id, r.route_short_name, count(t.service_id) AS service_count
+SELECT r.route_id,
+	r.route_short_name,
+	t.direction_id,
+	count(t.service_id) AS service_count
 FROM gtfs_2015.routes r
 	JOIN gtfs_2015.trips t
 		ON t.route_id = r.route_id and
@@ -11,7 +15,7 @@ FROM gtfs_2015.routes r
         r.route_id NOT LIKE '%NIGHT' AND
         r.route_id NOT LIKE '%PM' AND
 		r.route_id NOT LIKE '%LIMITED')
-GROUP BY r.route_id, r.route_short_name HAVING count(t.service_id) > 20;
+GROUP BY r.route_id, t.direction_id, r.route_short_name HAVING count(t.service_id) > 8
 
 
 -- Create view for head-time during peak hours 06-07-08
@@ -75,6 +79,7 @@ CREATE OR REPLACE VIEW gtfs_2015.run_time AS
 WITH run_time AS (
     SELECT
         routes.route_id,
+		trips.direction_id,
     	max(arrival_time::interval) - min(arrival_time::interval) AS run_time
     FROM gtfs_2015.stop_times AS stop_times
     JOIN gtfs_2015.trips AS trips
@@ -87,12 +92,12 @@ WITH run_time AS (
 		OR stop_times.arrival_time LIKE '06%'
 		OR stop_times.arrival_time LIKE '07%'
 		OR stop_times.arrival_time LIKE '08%')
-    GROUP BY routes.route_id, trips.trip_id
+    GROUP BY routes.route_id, trips.trip_id, trips.direction_id
     HAVING max(arrival_time::interval) - min(arrival_time::interval) > '00:05:00'
 )
-SELECT route_id, avg(run_time)
+SELECT route_id, direction_id, avg(run_time)
 FROM run_time
-GROUP BY route_id
+GROUP BY route_id, direction_id
 
 -- Create a view for the distance travel for each route based on the common routes and peak and non-peak trip
 CREATE OR REPLACE VIEW gtfs_2015.dist_travel AS (
