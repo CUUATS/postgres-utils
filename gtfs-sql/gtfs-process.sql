@@ -273,7 +273,7 @@ DROP VIEW gtfs_2015.circular_route;
 CREATE OR REPLACE VIEW gtfs_2015.circular_route AS
 SELECT vv.route_id,
 	vv.direction_id,
-	ST_DWithin(vv.first_n, vv.last_n, 1000) AS circular_route
+	ST_DWithin(vv.first_n, vv.last_n, 3000) AS circular_route
 FROM (
 	SELECT v.route_id,
 		v.direction_id,
