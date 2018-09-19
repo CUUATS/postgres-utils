@@ -26,6 +26,7 @@ SELECT v.route_id,
 	CASE WHEN (max(v.arrival_time) - min(v.arrival_time)) / count(v.arrival_time) = '00:00:00' THEN '01:59:00'
 	ELSE (max(v.arrival_time) - min(v.arrival_time)) / count(v.arrival_time)
 	END
+	AS head_time
 FROM (
 	SELECT DISTINCT ON (routes.route_id, stop_times.arrival_time)
 	    routes.route_id,
@@ -54,6 +55,7 @@ SELECT v.route_id,
 	CASE WHEN (max(v.arrival_time) - min(v.arrival_time)) / count(v.arrival_time) = '00:00:00' THEN '01:59:00'
 	ELSE (max(v.arrival_time) - min(v.arrival_time)) / count(v.arrival_time)
 	END
+	AS head_time
 FROM (
 	SELECT DISTINCT ON (routes.route_id, stop_times.arrival_time)
 	    routes.route_id,
@@ -100,8 +102,12 @@ FROM run_time
 GROUP BY route_id, direction_id
 
 -- Create a view for the distance travel for each route based on the common routes and peak and non-peak trip
+DROP VIEW gtfs_2015.dist_travel;
 CREATE OR REPLACE VIEW gtfs_2015.dist_travel AS (
-    SELECT routes.route_id, avg(shape_dist_traveled) AS dist_travel
+    SELECT
+		routes.route_id,
+		trips.direction_id,
+		avg(shape_dist_traveled) AS dist_travel
     FROM gtfs_2015.shapes AS shapes
     JOIN gtfs_2015.trips AS trips
         ON trips.shape_id = shapes.shape_id
@@ -115,19 +121,9 @@ CREATE OR REPLACE VIEW gtfs_2015.dist_travel AS (
         	  	OR stop_times.arrival_time LIKE '08%')
     RIGHT OUTER JOIN gtfs_2015.common_routes AS routes
         ON routes.route_id = trips.route_id
-    GROUP BY routes.route_id)
+    GROUP BY routes.route_id, trips.direction_id
+)
 ------------------------------------------------------
-CREATE OR REPLACE VIEW gtfs_2015.dist_travel AS
-SELECT route_shape.route_id,
-	l.shape_len
-FROM gtfs_2015.route_direction_shape route_shape
-JOIN (
-		SELECT shape_id,
-			ST_Length(ST_MakeLine(geom)) as shape_len
-		FROM gtfs_2015.shapes
-		GROUP BY shape_id
-	) l
-	ON l.shape_id = route_shape.shape_id
 
 
 
@@ -153,11 +149,22 @@ LANGUAGE plpgsql
 IMMUTABLE
 RETURNS NULL ON NULL INPUT
 
+CREATE OR REPLACE FUNCTION inter_to_min(inter interval) RETURNS int
+AS $$
+	BEGIN
+		RETURN (EXTRACT (HOUR FROM inter) * 60) + EXTRACT (MINUTE FROM inter);
+	END;
+$$
+LANGUAGE plpgsql
+IMMUTABLE
+RETURNS NULL ON NULL INPUT
+
 -- Create XY speed based on distance travel and run_time
 DROP MATERIALIZED VIEW gtfs_2015.xy_speed;
 CREATE MATERIALIZED VIEW gtfs_2015.xy_speed AS
 SELECT dist_travel.route_id,
-   calc_speed(dist_travel.dist_travel * 0.00062137, conv_inter_float(run_time.avg)) AS xy_speed
+	dist_travel.direction_id,
+   	calc_speed(dist_travel.dist_travel * 0.00062137, conv_inter_float(run_time.avg)) AS xy_speed
 FROM gtfs_2015.dist_travel AS dist_travel
     JOIN gtfs_2015.run_time AS run_time
         ON dist_travel.route_id = run_time.route_id
@@ -320,25 +327,27 @@ ORDER BY shape_count) AS ordered
 -- FINAL TABLE
 SELECT
 	common_routes.route_id AS line_name,
-	common_routes.route_id || '-' || common_routes.route_short_name || '-' || node_string.direction_id AS long_name,
+	common_routes.route_id || '-' || common_routes.route_short_name || '-' || common_routes.direction_id AS long_name,
 	1 AS mode,
 	1 AS operator,
 	1 AS vehicle_type,
 	'T' AS one_way,
 	'F' AS circular,
-	EXTRACT (MINUTE FROM hw_peak.head_time) AS headway_1,
-	EXTRACT (MINUTE FROM hw_non_peak.head_time) AS headway_2,
-	EXTRACT (MINUTE FROM run_time.avg) AS run_time,
-	round(xy_speed.xy_speed::numeric, 0) AS xy_speed,
-	node_string.nodes_agg
+	conv_inter_float(hw_peak.head_time) AS headway_1
+	-- EXTRACT (MINUTE FROM hw_non_peak.head_time) AS headway_2,
+	-- EXTRACT (MINUTE FROM run_time.avg) AS run_time,
+	-- round(xy_speed.xy_speed::numeric, 0) AS xy_speed,
+	-- node_string.nodes_agg
 FROM gtfs_2015.common_routes AS common_routes
-JOIN gtfs_2015.run_time AS run_time
-	ON run_time.route_id = common_routes.route_id
+
 JOIN gtfs_2015.peak_headway AS hw_peak
-	ON hw_peak.route_id = common_routes.route_id
-JOIN gtfs_2015.non_peak_headway AS hw_non_peak
-	ON hw_non_peak.route_id = common_routes.route_id
-JOIN gtfs_2015.xy_speed AS xy_speed
-	ON xy_speed.route_id = common_routes.route_id
-JOIN gtfs_2015.cube_node_string as node_string
-	ON node_string.route_id = common_routes.route_id
+	ON hw_peak.route_id = common_routes.route_id AND
+		hw_peak.direction_id = common_routes.direction_id
+-- JOIN gtfs_2015.non_peak_headway AS hw_non_peak
+-- 	ON hw_non_peak.route_id = common_routes.route_id
+-- JOIN gtfs_2015.run_time AS run_time
+-- 	ON run_time.route_id = common_routes.route_id
+-- JOIN gtfs_2015.xy_speed AS xy_speed
+-- 	ON xy_speed.route_id = common_routes.route_id
+-- JOIN gtfs_2015.cube_node_string as node_string
+-- 	ON node_string.route_id = common_routes.route_id
