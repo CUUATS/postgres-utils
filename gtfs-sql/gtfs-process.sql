@@ -268,6 +268,43 @@ FROM gtfs_2015.route_direction_shape rds
 GROUP BY rds.route_id, rds.direction_id, rds.shape_id, cube_nodes.id
 
 
+-- Check to see if the route is circular
+DROP VIEW gtfs_2015.circular_route;
+CREATE OR REPLACE VIEW gtfs_2015.circular_route AS
+SELECT vv.route_id,
+	vv.direction_id,
+	ST_DWithin(vv.first_n, vv.last_n, 1000) AS circular_route
+FROM (
+	SELECT v.route_id,
+		v.direction_id,
+		first_n.geom AS first_n,
+		last_n.geom AS last_n
+	FROM (
+		SELECT route_id,
+			direction_id,
+			seq,
+			id,
+			first_value(id) OVER (
+				PARTITION BY route_id, direction_id
+				ORDER BY seq
+			) AS f,
+			last_value(id) OVER (
+				PARTITION BY route_id, direction_id
+			) AS l
+		FROM gtfs_2015.cube_route_nodes
+		ORDER BY route_id, direction_id, seq
+	) AS v
+	JOIN gtfs_2015.cube_nodes first_n
+		ON v.f = first_n.id
+	JOIN gtfs_2015.cube_nodes last_n
+		ON v.l = last_n.id
+	WHERE v.route_id IS NOT NULL
+	GROUP BY v.route_id, v.direction_id, first_n.geom, last_n.geom
+) AS vv
+
+
+
+
 -- Find the stops and non-stop nodes
 -- SELECT
 -- 	route_id,
@@ -322,10 +359,19 @@ SELECT
 	1 AS mode,
 	1 AS operator,
 	1 AS vehicle_type,
+	CASE WHEN circular_route.circular_route = 'True' Then 'T'
+	ELSE 'F'
+	END
+	AS circular_route,
 	'T' AS one_way,
-	'F' AS circular,
-	inter_to_min(hw_peak.head_time) AS headway_1,
-	inter_to_min(hw_non_peak.head_time) AS headway_2,
+	CASE WHEN inter_to_min(hw_peak.head_time) IS NULL THEN 999
+	ELSE inter_to_min(hw_peak.head_time)
+	END
+	AS headway_1,
+	CASE WHEN inter_to_min(hw_non_peak.head_time) IS NULL THEN 999
+	ELSE inter_to_min(hw_non_peak.head_time)
+	END
+	AS headway_2,
 	inter_to_min(run_time.avg) AS run_time,
 	round(xy_speed.xy_speed::numeric, 0) AS xy_speed,
 	node_string.nodes_agg
@@ -336,6 +382,9 @@ LEFT OUTER JOIN gtfs_2015.peak_headway AS hw_peak
 LEFT OUTER JOIN gtfs_2015.non_peak_headway AS hw_non_peak
 	ON hw_non_peak.route_id = common_routes.route_id AND
 		hw_non_peak.direction_id = common_routes.direction_id
+JOIN gtfs_2015.circular_route AS circular_route
+	ON circular_route.route_id = common_routes.route_id AND
+		circular_route.direction_id = common_routes.direction_id
 JOIN gtfs_2015.run_time AS run_time
 	ON run_time.route_id = common_routes.route_id AND
 		run_time.direction_id = common_routes.direction_id
