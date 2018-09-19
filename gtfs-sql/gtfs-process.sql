@@ -167,7 +167,8 @@ SELECT dist_travel.route_id,
    	calc_speed(dist_travel.dist_travel * 0.00062137, conv_inter_float(run_time.avg)) AS xy_speed
 FROM gtfs_2015.dist_travel AS dist_travel
     JOIN gtfs_2015.run_time AS run_time
-        ON dist_travel.route_id = run_time.route_id
+        ON dist_travel.route_id = run_time.route_id AND
+			dist_travel.direction_id = run_time.direction_id
 
 
 
@@ -196,23 +197,24 @@ FROM gtfs_2015.stops AS s;
 
 
 -- Find the most common shapes for each route with direction
-WITH route_query AS (
-	SELECT
-		t.route_id,
-		t.shape_id,
-		t.direction_id,
-		count(t.shape_id) AS shape_count
-	FROM gtfs_2015.trips t
-		RIGHT OUTER JOIN gtfs_2015.common_routes_mat cr
-			ON cr.route_id = t.route_id
-	GROUP BY t.route_id, t.shape_id, t.direction_id
-	ORDER BY t.route_id
-)
-SELECT ori.route_id, ori.direction_id, max(ori.shape_count) AS max_count
-FROM route_query ori
-GROUP BY ori.route_id, ori.direction_id
-ORDER BY ori.route_id;DROP VIEW gtfs_2015.route_view;
+-- WITH route_query AS (
+-- 	SELECT
+-- 		t.route_id,
+-- 		t.shape_id,
+-- 		t.direction_id,
+-- 		count(t.shape_id) AS shape_count
+-- 	FROM gtfs_2015.trips t
+-- 		RIGHT OUTER JOIN gtfs_2015.common_routes_mat cr
+-- 			ON cr.route_id = t.route_id
+-- 	GROUP BY t.route_id, t.shape_id, t.direction_id
+-- 	ORDER BY t.route_id
+-- )
+-- SELECT ori.route_id, ori.direction_id, max(ori.shape_count) AS max_count
+-- FROM route_query ori
+-- GROUP BY ori.route_id, ori.direction_id
+-- ORDER BY ori.route_id;
 
+DROP VIEW gtfs_2015.route_view;
 CREATE OR REPLACE VIEW gtfs_2015.route_view AS
 WITH route_query AS (
 	SELECT
@@ -221,7 +223,7 @@ WITH route_query AS (
 		t.direction_id,
 		count(t.shape_id) AS shape_count
 	FROM gtfs_2015.trips t
-		RIGHT OUTER JOIN gtfs_2015.common_routes_mat cr
+		RIGHT OUTER JOIN gtfs_2015.common_routes cr
 			ON cr.route_id = t.route_id
 	GROUP BY t.route_id, t.shape_id, t.direction_id
 	ORDER BY t.route_id
@@ -231,6 +233,7 @@ FROM route_query ori
 GROUP BY ori.route_id, ori.direction_id
 ORDER BY ori.route_id;
 
+DROP VIEW gtfs_2015.route_direction_shape CASCADE;
 CREATE VIEW gtfs_2015.route_direction_shape AS
 SELECT rv.route_id, rv.direction_id, tem.shape_id FROM gtfs_2015.route_view rv
 	JOIN (
@@ -240,7 +243,7 @@ SELECT rv.route_id, rv.direction_id, tem.shape_id FROM gtfs_2015.route_view rv
 			t.direction_id,
 			count(t.shape_id) AS shape_count
 		FROM gtfs_2015.trips t
-			RIGHT OUTER JOIN gtfs_2015.common_routes_mat cr
+			RIGHT OUTER JOIN gtfs_2015.common_routes cr
 				ON cr.route_id = t.route_id
 		GROUP BY t.route_id, t.shape_id, t.direction_id
 		ORDER BY t.route_id
@@ -261,32 +264,20 @@ FROM gtfs_2015.route_direction_shape rds
 	JOIN gtfs_2015.shapes shapes
 		ON shapes.shape_id = rds.shape_id
 	RIGHT OUTER JOIN gtfs_2015.cube_nodes cube_nodes
-		ON ST_DWithin(shapes.geom, cube_nodes.geom, 30)
+		ON ST_DWithin(shapes.geom, cube_nodes.geom, 40)
 GROUP BY rds.route_id, rds.direction_id, rds.shape_id, cube_nodes.id
 
--- Alt: find the nodes based on a line buffer
-SELECT buff.shape_id,
-	cube_nodes.id
-FROM (
-	SELECT shape_id,
-		ST_Buffer(ST_MakeLine(geom),30) AS buffer
-	FROM gtfs_2015.shapes
-	GROUP BY shape_id
-) buff
-JOIN gtfs_2015.cube_nodes AS cube_nodes
-	ON ST_Contains(buff.buffer, cube_nodes.geom)
-ORDER BY buff.shape_id
 
 -- Find the stops and non-stop nodes
-SELECT
-	route_id,
-	direction_id,
-	seq,
-	CASE WHEN (id IN (SELECT intersection_id FROM gtfs_2015.stop_intersection)) THEN id
-	ELSE -id
-	END
-FROM gtfs_2015.cube_route_nodes
-ORDER BY route_id, direction_id, seq;
+-- SELECT
+-- 	route_id,
+-- 	direction_id,
+-- 	seq,
+-- 	CASE WHEN (id IN (SELECT intersection_id FROM gtfs_2015.stop_intersection)) THEN id
+-- 	ELSE -id
+-- 	END
+-- FROM gtfs_2015.cube_route_nodes
+-- ORDER BY route_id, direction_id, seq;
 
 -- Aggregate the stops into strings
 CREATE OR REPLACE VIEW gtfs_2015.cube_node_string AS
@@ -309,19 +300,19 @@ GROUP BY sorted_intersection.route_id, sorted_intersection.direction_id
 
 
 -- Matt's query
-SELECT DISTINCT ON (route_id, direction_id) *
-FROM (
-	SELECT * FROM (
-		SELECT t.route_id,
-		t.shape_id,
-		t.direction_id,
-		count(t.shape_id) AS shape_count
-		FROM gtfs_2015.trips t
-			RIGHT OUTER JOIN gtfs_2015.common_routes_mat cr
-				ON cr.route_id = t.route_id
-		GROUP BY t.route_id, t.shape_id, t.direction_id
-	) AS grouped
-ORDER BY shape_count) AS ordered
+-- SELECT DISTINCT ON (route_id, direction_id) *
+-- FROM (
+-- 	SELECT * FROM (
+-- 		SELECT t.route_id,
+-- 		t.shape_id,
+-- 		t.direction_id,
+-- 		count(t.shape_id) AS shape_count
+-- 		FROM gtfs_2015.trips t
+-- 			RIGHT OUTER JOIN gtfs_2015.common_routes_mat cr
+-- 				ON cr.route_id = t.route_id
+-- 		GROUP BY t.route_id, t.shape_id, t.direction_id
+-- 	) AS grouped
+-- ORDER BY shape_count) AS ordered
 
 
 -- FINAL TABLE
@@ -333,21 +324,25 @@ SELECT
 	1 AS vehicle_type,
 	'T' AS one_way,
 	'F' AS circular,
-	conv_inter_float(hw_peak.head_time) AS headway_1
-	-- EXTRACT (MINUTE FROM hw_non_peak.head_time) AS headway_2,
-	-- EXTRACT (MINUTE FROM run_time.avg) AS run_time,
-	-- round(xy_speed.xy_speed::numeric, 0) AS xy_speed,
-	-- node_string.nodes_agg
+	inter_to_min(hw_peak.head_time) AS headway_1,
+	inter_to_min(hw_non_peak.head_time) AS headway_2,
+	inter_to_min(run_time.avg) AS run_time,
+	round(xy_speed.xy_speed::numeric, 0) AS xy_speed,
+	node_string.nodes_agg
 FROM gtfs_2015.common_routes AS common_routes
-
-JOIN gtfs_2015.peak_headway AS hw_peak
+LEFT OUTER JOIN gtfs_2015.peak_headway AS hw_peak
 	ON hw_peak.route_id = common_routes.route_id AND
 		hw_peak.direction_id = common_routes.direction_id
--- JOIN gtfs_2015.non_peak_headway AS hw_non_peak
--- 	ON hw_non_peak.route_id = common_routes.route_id
--- JOIN gtfs_2015.run_time AS run_time
--- 	ON run_time.route_id = common_routes.route_id
--- JOIN gtfs_2015.xy_speed AS xy_speed
--- 	ON xy_speed.route_id = common_routes.route_id
--- JOIN gtfs_2015.cube_node_string as node_string
--- 	ON node_string.route_id = common_routes.route_id
+LEFT OUTER JOIN gtfs_2015.non_peak_headway AS hw_non_peak
+	ON hw_non_peak.route_id = common_routes.route_id AND
+		hw_non_peak.direction_id = common_routes.direction_id
+JOIN gtfs_2015.run_time AS run_time
+	ON run_time.route_id = common_routes.route_id AND
+		run_time.direction_id = common_routes.direction_id
+JOIN gtfs_2015.xy_speed AS xy_speed
+	ON xy_speed.route_id = common_routes.route_id AND
+		xy_speed.direction_id = common_routes.direction_id
+JOIN gtfs_2015.cube_node_string as node_string
+	ON node_string.route_id = common_routes.route_id AND
+		node_string.direction_id = common_routes.direction_id
+ORDER BY common_routes.route_id
