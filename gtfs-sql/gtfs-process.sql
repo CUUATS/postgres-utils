@@ -15,39 +15,59 @@ GROUP BY r.route_id, r.route_short_name HAVING count(t.service_id) > 20;
 
 
 -- Create view for head-time during peak hours 06-07-08
-SELECT
-    routes.route_id,
-    (max(stop_times.arrival_time::interval) - min(stop_times.arrival_time::interval)) / count(stop_times.arrival_time) AS head_time
-FROM gtfs_2015.stop_times AS stop_times
-JOIN gtfs_2015.trips AS trips
-    ON stop_times.trip_id = trips.trip_id
-RIGHT OUTER JOIN gtfs_2015.common_routes AS routes
-    ON
-        routes.route_id = trips.route_id
-WHERE (stop_times.arrival_time LIKE '06%'
-		OR stop_times.arrival_time LIKE '07%'
-	  	OR stop_times.arrival_time LIKE '08%')
-        AND stop_times.stop_sequence = 1
-GROUP BY routes.route_id
-HAVING (max(stop_times.arrival_time::interval) - min(stop_times.arrival_time::interval)) / count(stop_times.arrival_time) <> '00:00:00'
+DROP VIEW gtfs_2015.peak_headway;
+CREATE OR REPLACE VIEW gtfs_2015.peak_headway AS
+SELECT v.route_id,
+	v.direction_id,
+	CASE WHEN (max(v.arrival_time) - min(v.arrival_time)) / count(v.arrival_time) = '00:00:00' THEN '01:59:00'
+	ELSE (max(v.arrival_time) - min(v.arrival_time)) / count(v.arrival_time)
+	END
+FROM (
+	SELECT DISTINCT ON (routes.route_id, stop_times.arrival_time)
+	    routes.route_id,
+		trips.direction_id,
+	    stop_times.arrival_time::interval
+	FROM gtfs_2015.stop_times AS stop_times
+	JOIN gtfs_2015.trips AS trips
+	    ON stop_times.trip_id = trips.trip_id
+	RIGHT OUTER JOIN gtfs_2015.common_routes AS routes
+	    ON
+	        routes.route_id = trips.route_id
+	WHERE (stop_times.arrival_time LIKE '06%'
+			OR stop_times.arrival_time LIKE '07%'
+		  	OR stop_times.arrival_time LIKE '08%')
+	        AND stop_times.stop_sequence = 1
+			AND stop_times.trip_id NOT LIKE '%NO%'
+) AS v
+GROUP BY v.route_id, v.direction_id
 
 
 -- Create view for head-time during non peak hour 12, 13, 14
-SELECT
-    routes.route_id,
-    (max(stop_times.arrival_time::interval) - min(stop_times.arrival_time::interval)) / count(stop_times.arrival_time) AS head_time
-FROM gtfs_2015.stop_times AS stop_times
-JOIN gtfs_2015.trips AS trips
-    ON stop_times.trip_id = trips.trip_id
-RIGHT OUTER JOIN gtfs_2015.common_routes AS routes
-    ON
-        routes.route_id = trips.route_id
-WHERE (stop_times.arrival_time LIKE '12%'
-		OR stop_times.arrival_time LIKE '13%'
-	  	OR stop_times.arrival_time LIKE '14%')
-        AND stop_times.stop_sequence = 1
-GROUP BY routes.route_id
-HAVING (max(stop_times.arrival_time::interval) - min(stop_times.arrival_time::interval)) / count(stop_times.arrival_time) <> '00:00:00'
+DROP VIEW gtfs_2015.non_peak_headway;
+CREATE OR REPLACE VIEW gtfs_2015.non_peak_headway AS
+SELECT v.route_id,
+	v.direction_id,
+	CASE WHEN (max(v.arrival_time) - min(v.arrival_time)) / count(v.arrival_time) = '00:00:00' THEN '01:59:00'
+	ELSE (max(v.arrival_time) - min(v.arrival_time)) / count(v.arrival_time)
+	END
+FROM (
+	SELECT DISTINCT ON (routes.route_id, stop_times.arrival_time)
+	    routes.route_id,
+		trips.direction_id,
+	    stop_times.arrival_time::interval
+	FROM gtfs_2015.stop_times AS stop_times
+	JOIN gtfs_2015.trips AS trips
+	    ON stop_times.trip_id = trips.trip_id
+	RIGHT OUTER JOIN gtfs_2015.common_routes AS routes
+	    ON
+	        routes.route_id = trips.route_id
+	WHERE (stop_times.arrival_time LIKE '14%'
+			OR stop_times.arrival_time LIKE '15%'
+		  	OR stop_times.arrival_time LIKE '16%')
+	        AND stop_times.stop_sequence = 1
+			AND stop_times.trip_id NOT LIKE '%NO%'
+) AS v
+GROUP BY v.route_id, v.direction_id
 
 
 -- Find the average run-time for each route base on all the trips the route has
@@ -61,9 +81,9 @@ WITH run_time AS (
         ON trips.trip_id = stop_times.trip_id
     RIGHT OUTER JOIN gtfs_2015.common_routes AS routes
         ON routes.route_id = trips.route_id
-	WHERE (stop_times.arrival_time LIKE '%12'
-		OR stop_times.arrival_time LIKE '13%'
-		OR stop_times.arrival_time LIKE '14%'
+	WHERE (stop_times.arrival_time LIKE '%14'
+		OR stop_times.arrival_time LIKE '15%'
+		OR stop_times.arrival_time LIKE '16%'
 		OR stop_times.arrival_time LIKE '06%'
 		OR stop_times.arrival_time LIKE '07%'
 		OR stop_times.arrival_time LIKE '08%')
@@ -82,9 +102,9 @@ CREATE OR REPLACE VIEW gtfs_2015.dist_travel AS (
         ON trips.shape_id = shapes.shape_id
     RIGHT OUTER JOIN gtfs_2015.stop_times AS stop_times
         ON stop_times.trip_id = trips.trip_id
-            AND (stop_times.arrival_time LIKE '%12'
-                OR stop_times.arrival_time LIKE '13%'
-                OR stop_times.arrival_time LIKE '14%'
+            AND (stop_times.arrival_time LIKE '%14'
+                OR stop_times.arrival_time LIKE '15%'
+                OR stop_times.arrival_time LIKE '16%'
                 OR stop_times.arrival_time LIKE '06%'
         		OR stop_times.arrival_time LIKE '07%'
         	  	OR stop_times.arrival_time LIKE '08%')
@@ -129,6 +149,7 @@ IMMUTABLE
 RETURNS NULL ON NULL INPUT
 
 -- Create XY speed based on distance travel and run_time
+DROP MATERIALIZED VIEW gtfs_2015.xy_speed;
 CREATE MATERIALIZED VIEW gtfs_2015.xy_speed AS
 SELECT dist_travel.route_id,
    calc_speed(dist_travel.dist_travel * 0.00062137, conv_inter_float(run_time.avg)) AS xy_speed
@@ -136,60 +157,6 @@ FROM gtfs_2015.dist_travel AS dist_travel
     JOIN gtfs_2015.run_time AS run_time
         ON dist_travel.route_id = run_time.route_id
 
-
--- Create the view for stop_id matching the intersection_id
--- CREATE OR REPLACE VIEW gtfs_2015.stop_intersection AS
--- SELECT s.stop_id,
---   (SELECT i.intersection_id
---    FROM street.intersection as i
---    ORDER BY s.geom <#> i.shape LIMIT 1) AS intersection_id
--- FROM gtfs_2015.stops AS s;
-
--- Create view for matching shape based on closet intersection
--- SELECT DISTINCT ON (intersection_id)
--- 		s.shape_id,
--- 		(SELECT
--- 		   i.intersection_id
--- 		   FROM street.intersection as i
--- 		   ORDER BY s.geom <#> i.shape LIMIT 1
--- 	   )::text AS intersection_id,
--- 	   s.shape_pt_sequence AS intersection_seq
--- 	FROM gtfs_2015.shapes AS s
--- 	WHERE s.shape_id = '100N'
---
--- -- Create the view for matching shape based on street
--- SELECT
--- 	shapes.shape_id,
--- 	(SELECT
--- 	   segment.segment_id
--- 	   FROM street.segment as segment
--- 	   ORDER BY shapes.geom <#> segment.geom LIMIT 1
---    )::text AS segment_id,
---    min(shapes.shape_pt_sequence) AS segment_sequence
--- FROM gtfs_2015.shapes AS shapes
--- WHERE shapes.shape_id = '100N'
--- GROUP BY shape_id, segment_id
--- ORDER BY segment_sequence
-
-
-
--- Create a list of nodes that the bus route goes through
--- If it's a bus stop, node is positive, else negative
-
-
-
-
--- Break the line down into nodes
--- CREATE VIEW gtfs_2015.shape_nodes AS
--- SELECT (st_DumpPoints((st_dump(geom)).geom)).geom AS nodes,
--- 	(st_DumpPoints((st_dump(geom)).geom)).path AS nodes_order,
--- 	(st_dump(geom)).path AS path_order
--- FROM gtfs_2015.route_2015 r
---
--- SELECT nodes, cn.id, nodes_order, path_order
--- FROM gtfs_2015.shape_nodes sn
--- 	JOIN gtfs_2015.cube_nodes cn
--- 		ON ST_DWithin(sn.nodes, cn.geom, 150)
 
 
 -- Imported the nodes x, y table from cube dbf
@@ -206,14 +173,14 @@ SELECT s.stop_id,
 FROM gtfs_2015.stops AS s;
 
 -- Select the cube_nodes based on gtfs shape data
-CREATE MATERIALIZED VIEW gtfs_2015.cube_route_nodes AS
-SELECT shape_id, min(shape_pt_sequence), cn.id
-FROM gtfs_2015.shapes s
-	JOIN gtfs_2015.common_routes
-	RIGHT OUTER JOIN gtfs_2015.cube_nodes cn
-		ON ST_DWithin(s.geom, cn.geom, 30)
-GROUP BY s.shape_id, cn.id
-ORDER BY min(shape_pt_sequence)
+-- CREATE MATERIALIZED VIEW gtfs_2015.cube_route_nodes AS
+-- SELECT shape_id, min(shape_pt_sequence), cn.id
+-- FROM gtfs_2015.shapes s
+-- 	JOIN gtfs_2015.common_routes
+-- 	RIGHT OUTER JOIN gtfs_2015.cube_nodes cn
+-- 		ON ST_DWithin(s.geom, cn.geom, 30)
+-- GROUP BY s.shape_id, cn.id
+-- ORDER BY min(shape_pt_sequence)
 
 
 -- Find the most common shapes for each route with direction
@@ -354,17 +321,17 @@ SELECT
 	1 AS vehicle_type,
 	'T' AS one_way,
 	'F' AS circular,
-	EXTRACT (MINUTE FROM hw_peak.avg_head_time) AS headway_1,
-	EXTRACT (MINUTE FROM hw_non_peak.avg_head_time) AS headway_2,
+	EXTRACT (MINUTE FROM hw_peak.head_time) AS headway_1,
+	EXTRACT (MINUTE FROM hw_non_peak.head_time) AS headway_2,
 	EXTRACT (MINUTE FROM run_time.avg) AS run_time,
 	round(xy_speed.xy_speed::numeric, 0) AS xy_speed,
 	node_string.nodes_agg
 FROM gtfs_2015.common_routes AS common_routes
 JOIN gtfs_2015.run_time AS run_time
 	ON run_time.route_id = common_routes.route_id
-JOIN gtfs_2015.headway_peak_avg AS hw_peak
+JOIN gtfs_2015.peak_headway AS hw_peak
 	ON hw_peak.route_id = common_routes.route_id
-JOIN gtfs_2015.headway_non_peak_avg AS hw_non_peak
+JOIN gtfs_2015.non_peak_headway AS hw_non_peak
 	ON hw_non_peak.route_id = common_routes.route_id
 JOIN gtfs_2015.xy_speed AS xy_speed
 	ON xy_speed.route_id = common_routes.route_id
