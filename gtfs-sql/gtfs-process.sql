@@ -254,18 +254,44 @@ SELECT rv.route_id, rv.direction_id, tem.shape_id FROM gtfs_2015.route_view rv
 
 
 -- Find the cube nodes that the routes goes through
+DROP MATERIALIZED VIEW gtfs_2015.cube_route_nodes CASCADE;
 CREATE MATERIALIZED VIEW gtfs_2015.cube_route_nodes AS
 SELECT rds.route_id,
 	rds.direction_id,
 	rds.shape_id,
 	min(shapes.shape_pt_sequence) seq,
-	cube_nodes.id
+	cube_nodes.n
 FROM gtfs_2015.route_direction_shape rds
 	JOIN gtfs_2015.shapes shapes
 		ON shapes.shape_id = rds.shape_id
-	RIGHT OUTER JOIN gtfs_2015.cube_nodes cube_nodes
+	RIGHT OUTER JOIN gtfs_2015.cube_nodes AS cube_nodes
 		ON ST_DWithin(shapes.geom, cube_nodes.geom, 40)
-GROUP BY rds.route_id, rds.direction_id, rds.shape_id, cube_nodes.id
+GROUP BY rds.route_id, rds.direction_id, rds.shape_id, cube_nodes.n
+
+
+-- Create a better algorithm to match the shape to the cube nodes
+-- SELECT
+-- 	l.route_id,
+-- 	l.direction_id,
+-- 	cube_nodes.id,
+-- 	ST_LineLocatePoint(l.shape_line, cube_nodes.geom) AS pt_location
+-- FROM (
+-- 	SELECT rds.route_id,
+-- 		rds.direction_id,
+-- 		ST_MakeLine(shapes.geom) AS shape_line
+-- 	FROM gtfs_2015.route_direction_shape rds
+-- 		JOIN gtfs_2015.shapes shapes
+-- 			ON shapes.shape_id = rds.shape_id
+-- 	GROUP BY rds.route_id,
+-- 		rds.direction_id,
+-- 		shapes.shape_pt_sequence
+-- 	ORDER BY shapes.shape_pt_sequence
+-- ) AS l
+-- JOIN gtfs_2015.cube_nodes AS cube_nodes
+-- 	ON ST_DWithin(l.shape_line, cube_nodes.geom, 30)
+-- ORDER BY l.route_id, l.direction_id, ST_LineLocatePoint(l.shape_line, cube_nodes.geom)
+
+
 
 
 -- Check to see if the route is circular
@@ -283,21 +309,21 @@ FROM (
 		SELECT route_id,
 			direction_id,
 			seq,
-			id,
-			first_value(id) OVER (
+			n,
+			first_value(n) OVER (
 				PARTITION BY route_id, direction_id
 				ORDER BY seq
 			) AS f,
-			last_value(id) OVER (
+			last_value(n) OVER (
 				PARTITION BY route_id, direction_id
 			) AS l
 		FROM gtfs_2015.cube_route_nodes
 		ORDER BY route_id, direction_id, seq
 	) AS v
 	JOIN gtfs_2015.cube_nodes first_n
-		ON v.f = first_n.id
+		ON v.f = first_n.n
 	JOIN gtfs_2015.cube_nodes last_n
-		ON v.l = last_n.id
+		ON v.l = last_n.n
 	WHERE v.route_id IS NOT NULL
 	GROUP BY v.route_id, v.direction_id, first_n.geom, last_n.geom
 ) AS vv
@@ -321,14 +347,14 @@ CREATE OR REPLACE VIEW gtfs_2015.cube_node_string AS
 SELECT
 	sorted_intersection.route_id,
 	sorted_intersection.direction_id,
-	string_agg(sorted_intersection.intersection_id, ',') AS nodes_agg
+	string_agg(sorted_intersection.intersection_id, ', ') AS nodes_agg
 FROM
 	(SELECT
 		route_id,
 		direction_id,
 		seq,
-		CASE WHEN (id IN (SELECT cube_node_id FROM gtfs_2015.stop_cube_node)) THEN id::text
-		ELSE (-id)::text
+		CASE WHEN (n IN (SELECT cube_node_id FROM gtfs_2015.stop_cube_node)) THEN n::text
+		ELSE (-n)::text
 		END AS intersection_id
 	FROM gtfs_2015.cube_route_nodes
 	ORDER BY route_id, direction_id, seq) AS sorted_intersection
@@ -354,27 +380,27 @@ GROUP BY sorted_intersection.route_id, sorted_intersection.direction_id
 
 -- FINAL TABLE
 SELECT
-	common_routes.route_id AS line_name,
-	common_routes.route_id || '-' || common_routes.route_short_name || '-' || common_routes.direction_id AS long_name,
-	1 AS mode,
-	1 AS operator,
-	1 AS vehicle_type,
-	CASE WHEN circular_route.circular_route = 'True' Then 'T'
+	'LINE NAME="' || common_routes.route_id || '"' AS line_name,
+	'LONGNAME="' || common_routes.route_id || '-' || common_routes.route_short_name || '-' || common_routes.direction_id || '"' AS long_name,
+	'MODE=' || 1 AS mode,
+	'OPERATOR=' || 1 AS operator,
+	'VEHICLETYPE=' || 1 AS vehicle_type,
+	'ONEWAY=T' AS one_way,
+	'CIRCULAR=' || CASE WHEN circular_route.circular_route = 'True' Then 'T'
 	ELSE 'F'
 	END
 	AS circular_route,
-	'T' AS one_way,
-	CASE WHEN inter_to_min(hw_peak.head_time) IS NULL THEN 999
+	'HEADWAY[1]=' || CASE WHEN inter_to_min(hw_peak.head_time) IS NULL THEN 999
 	ELSE inter_to_min(hw_peak.head_time)
 	END
 	AS headway_1,
-	CASE WHEN inter_to_min(hw_non_peak.head_time) IS NULL THEN 999
+	'HEADWAY_R[1]=' || CASE WHEN inter_to_min(hw_non_peak.head_time) IS NULL THEN 999
 	ELSE inter_to_min(hw_non_peak.head_time)
 	END
 	AS headway_2,
-	inter_to_min(run_time.avg) AS run_time,
-	round(xy_speed.xy_speed::numeric, 0) AS xy_speed,
-	node_string.nodes_agg
+	'RUNTIME=' || inter_to_min(run_time.avg) AS run_time,
+	'XYSPEED=' || round(xy_speed.xy_speed::numeric, 0) AS xy_speed,
+	'N=' || node_string.nodes_agg AS n
 FROM gtfs_2015.common_routes AS common_routes
 LEFT OUTER JOIN gtfs_2015.peak_headway AS hw_peak
 	ON hw_peak.route_id = common_routes.route_id AND
