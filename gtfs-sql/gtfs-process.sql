@@ -180,7 +180,7 @@ UPDATE gtfs_2015.cube_nodes SET geom = ST_SetSRID(ST_MakePoint(x, y), 3435);
 -- Create the view for stop_id matching the cube nodes id
 CREATE OR REPLACE VIEW gtfs_2015.stop_cube_node AS
 SELECT s.stop_id,
-  (SELECT cn.id
+  (SELECT cn.n
    FROM gtfs_2015.cube_nodes as cn
    ORDER BY s.geom <#> cn.geom LIMIT 1) AS cube_node_id
 FROM gtfs_2015.stops AS s;
@@ -342,7 +342,7 @@ FROM (
 -- FROM gtfs_2015.cube_route_nodes
 -- ORDER BY route_id, direction_id, seq;
 
--- Aggregate the stops into strings
+-- Aggregate the stops into strings while also find stop and non stop nodes
 CREATE OR REPLACE VIEW gtfs_2015.cube_node_string AS
 SELECT
 	sorted_intersection.route_id,
@@ -360,6 +360,7 @@ FROM
 	ORDER BY route_id, direction_id, seq) AS sorted_intersection
 GROUP BY sorted_intersection.route_id, sorted_intersection.direction_id
 
+-- Create a better way to find stop and non-stop nodes
 
 
 -- Matt's query
