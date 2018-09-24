@@ -348,6 +348,7 @@ FROM
 GROUP BY sorted_intersection.route_id, sorted_intersection.direction_id
 
 -- Create a better way to find stop and non-stop nodes
+-- based on most commmon service
 CREATE VIEW gtfs_2015.route_common_service AS
 SELECT DISTINCT ON (route_id, direction_id)
 	v.route_id,
@@ -441,28 +442,31 @@ FROM (
 ORDER BY route_id, direction_id, stop_sequence
 
 -- aggregate into string
-DROP VIEW gtfs_2015.cube_node_string;
-CREATE OR REPLACE VIEW gtfs_2015.cube_node_string AS
+DROP VIEW gtfs_2015.stop_sring;
+CREATE OR REPLACE VIEW gtfs_2015.stop_string AS
 SELECT
 	sorted_intersection.route_id,
 	sorted_intersection.direction_id,
-	string_agg(sorted_intersection.intersection_id::text, ', ') AS nodes_agg
+	sorted_intersection.shape_id,
+	string_agg(sorted_intersection.intersection_id::text, ', ') AS stop_nodes
 FROM
 	(
-		SELECT uni.route_id, uni.direction_id, uni.cube_node_id AS intersection_id
+		SELECT uni.route_id, uni.direction_id, uni.shape_id, uni.cube_node_id AS intersection_id
 		FROM (
-			SELECT DISTINCT ON (stops.route_id, stops.direction_id, stops.cube_node_id) *
+			SELECT DISTINCT ON (stops.route_id, stops.direction_id, stops.cube_node_id, stops.shape_id) *
 			FROM (
 				SELECT
 					rep_trip.route_id,
 					rep_trip.direction_id,
 					scn.cube_node_id,
+					rep_trip.shape_id,
 					stop_sequence
 				FROM (
 					SELECT DISTINCT ON (common_routes.route_id, common_routes.direction_id)
 						common_routes.route_id,
 						common_routes.direction_id,
 						trips.trip_id,
+						trips.shape_id,
 						line_length.lin AS line_len
 					FROM gtfs_2015.common_routes AS common_routes
 					JOIN gtfs_2015.trips AS trips
@@ -481,6 +485,8 @@ FROM
 						GROUP BY v.shape_id
 					) AS line_length
 						ON line_length.shape_id = trips.shape_id
+					WHERE trip_id NOT LIKE '%NO%' AND
+						trip_id <> '[@14.0.51709152@][3][1278100832750]/0__G5_MF'
 					ORDER BY
 						common_routes.route_id,
 						common_routes.direction_id,
@@ -490,30 +496,40 @@ FROM
 					ON stop_times.trip_id = rep_trip.trip_id
 				JOIN gtfs_2015.stop_cube_node AS scn
 					ON scn.stop_id = stop_times.stop_id
-				-- WHERE route_id = 'TEAL'
 				ORDER BY route_id, direction_id, stop_sequence
 			) AS stops
 		) AS uni
 		ORDER BY route_id, direction_id, stop_sequence
 	) AS sorted_intersection
-GROUP BY sorted_intersection.route_id, sorted_intersection.direction_id
+GROUP BY sorted_intersection.route_id, sorted_intersection.direction_id, sorted_intersection.shape_id
 
 
--- Matt's query
--- SELECT DISTINCT ON (route_id, direction_id) *
--- FROM (
--- 	SELECT * FROM (
--- 		SELECT t.route_id,
--- 		t.shape_id,
--- 		t.direction_id,
--- 		count(t.shape_id) AS shape_count
--- 		FROM gtfs_2015.trips t
--- 			RIGHT OUTER JOIN gtfs_2015.common_routes_mat cr
--- 				ON cr.route_id = t.route_id
--- 		GROUP BY t.route_id, t.shape_id, t.direction_id
--- 	) AS grouped
--- JOIN
--- ORDER BY shape_count) AS ordered
+-------
+
+CREATE MATERIALIZED VIEW gtfs_2015.cube_node_string AS
+SELECT
+	seq_node.route_id,
+	seq_node.direction_id,
+	string_agg(
+	CASE WHEN seq_node.stop_nodes LIKE '%' || seq_node.n::text || '%' THEN seq_node.n::text
+	ELSE (-seq_node.n)::text
+	END, ', '
+	)
+FROM (
+	SELECT stop_string.route_id,
+		stop_string.direction_id,
+		stop_string.stop_nodes,
+		cube_nodes.n,
+		min(shapes.shape_pt_sequence) AS seq
+	FROM gtfs_2015.stop_string AS stop_string
+	JOIN gtfs_2015.shapes shapes
+		ON shapes.shape_id = stop_string.shape_id
+	RIGHT OUTER JOIN gtfs_2015.cube_nodes AS cube_nodes
+		ON ST_DWithin(shapes.geom, cube_nodes.geom, 40)
+	GROUP BY stop_string.route_id, stop_string.stop_nodes, stop_string.direction_id, cube_nodes.n
+	ORDER BY route_id, direction_id, seq) AS seq_node
+GROUP BY seq_node.route_id,
+	seq_node.direction_id
 
 
 -- FINAL TABLE
@@ -538,7 +554,7 @@ SELECT
 	AS headway_2,
 	'RUNTIME=' || inter_to_min(run_time.avg) AS run_time,
 	'XYSPEED=' || round(xy_speed.xy_speed::numeric, 0) AS xy_speed,
-	'N=' || node_string.nodes_agg AS n
+	'N=' || node_string.string_agg AS n
 FROM gtfs_2015.common_routes AS common_routes
 LEFT OUTER JOIN gtfs_2015.peak_headway AS hw_peak
 	ON hw_peak.route_id = common_routes.route_id AND
