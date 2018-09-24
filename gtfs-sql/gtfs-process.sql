@@ -221,16 +221,16 @@ WITH route_query AS (
 		t.route_id,
 		t.shape_id,
 		t.direction_id,
-		count(t.shape_id) AS shape_count
+		COUNT(t.shape_id) AS shape_count
 	FROM gtfs_2015.trips t
 		RIGHT OUTER JOIN gtfs_2015.common_routes cr
 			ON cr.route_id = t.route_id
 	GROUP BY t.route_id, t.shape_id, t.direction_id
 	ORDER BY t.route_id
 )
-SELECT ori.route_id, ori.direction_id, max(ori.shape_count) AS max_count
+SELECT ori.route_id, ori.direction_id, ori.shape_id, max(ori.shape_count) AS max_count
 FROM route_query ori
-GROUP BY ori.route_id, ori.direction_id
+GROUP BY ori.route_id, ori.direction_id, ori.shape_id
 ORDER BY ori.route_id;
 
 DROP VIEW gtfs_2015.route_direction_shape CASCADE;
@@ -329,19 +329,6 @@ FROM (
 ) AS vv
 
 
-
-
--- Find the stops and non-stop nodes
--- SELECT
--- 	route_id,
--- 	direction_id,
--- 	seq,
--- 	CASE WHEN (id IN (SELECT intersection_id FROM gtfs_2015.stop_intersection)) THEN id
--- 	ELSE -id
--- 	END
--- FROM gtfs_2015.cube_route_nodes
--- ORDER BY route_id, direction_id, seq;
-
 -- Aggregate the stops into strings while also find stop and non stop nodes
 CREATE OR REPLACE VIEW gtfs_2015.cube_node_string AS
 SELECT
@@ -361,6 +348,155 @@ FROM
 GROUP BY sorted_intersection.route_id, sorted_intersection.direction_id
 
 -- Create a better way to find stop and non-stop nodes
+CREATE VIEW gtfs_2015.route_common_service AS
+SELECT DISTINCT ON (route_id, direction_id)
+	v.route_id,
+	v.direction_id,
+	v.service_id,
+	v.service_count
+FROM (
+	SELECT
+		common_routes.route_id,
+		common_routes.direction_id,
+		trips.service_id,
+		COUNT(trips.service_id) as service_count
+	FROM gtfs_2015.common_routes AS common_routes
+	JOIN gtfs_2015.trips AS trips
+		ON trips.route_id = common_routes.route_id
+	GROUP BY common_routes.route_id,
+		common_routes.direction_id,
+		trips.service_id
+	ORDER BY common_routes.route_id
+) AS v
+ORDER BY v.route_id, v.direction_id, v.service_count DESC
+
+SELECT rep_trip.route_id,
+	rep_trip.direction_id,
+	scn.cube_node_id
+FROM (
+	SELECT DISTINCT ON (route_id, direction_id)
+		route.route_id,
+		route.direction_id,
+		trips.trip_id
+	FROM gtfs_2015.route_common_service AS route
+	JOIN gtfs_2015.trips AS trips
+		ON trips.route_id = route.route_id
+	ORDER BY route.route_id,
+		route.direction_id
+) rep_trip
+JOIN gtfs_2015.stop_times AS stop_times
+	ON stop_times.trip_id = rep_trip.trip_id
+JOIN gtfs_2015.stop_cube_node AS scn
+	ON scn.stop_id = stop_times.stop_id
+WHERE route_id = 'TEAL'
+ORDER BY route_id, direction_id, stop_sequence
+
+-- Find the longest shape to reprensent the route in the stop
+-- Find the length of each shape
+SELECT uni.route_id, uni.direction_id, uni.cube_node_id AS intersection_id
+FROM (
+	SELECT DISTINCT ON (stops.route_id, stops.direction_id, stops.cube_node_id) *
+	FROM (
+		SELECT
+			rep_trip.route_id,
+			rep_trip.direction_id,
+			scn.cube_node_id,
+			stop_sequence
+		FROM (
+			SELECT DISTINCT ON (common_routes.route_id, common_routes.direction_id)
+				common_routes.route_id,
+				common_routes.direction_id,
+				trips.trip_id,
+				line_length.lin AS line_len
+			FROM gtfs_2015.common_routes AS common_routes
+			JOIN gtfs_2015.trips AS trips
+				ON trips.route_id = common_routes.route_id AND
+				trips.direction_id = common_routes.direction_id
+			JOIN (
+				SELECT v.shape_id,
+					ST_Length(ST_MakeLine(v.pt)) AS lin
+				FROM (
+					SELECT
+						shapes.shape_id,
+						shapes.geom AS pt
+					FROM gtfs_2015.shapes AS shapes
+					ORDER BY shapes.shape_id, shapes.shape_pt_sequence
+				) AS v
+				GROUP BY v.shape_id
+			) AS line_length
+				ON line_length.shape_id = trips.shape_id
+			ORDER BY
+				common_routes.route_id,
+				common_routes.direction_id,
+				line_length.lin DESC
+		) rep_trip
+		JOIN gtfs_2015.stop_times AS stop_times
+			ON stop_times.trip_id = rep_trip.trip_id
+		JOIN gtfs_2015.stop_cube_node AS scn
+			ON scn.stop_id = stop_times.stop_id
+		-- WHERE route_id = 'TEAL'
+		ORDER BY route_id, direction_id, stop_sequence
+	) AS stops
+) AS uni
+ORDER BY route_id, direction_id, stop_sequence
+
+-- aggregate into string
+DROP VIEW gtfs_2015.cube_node_string;
+CREATE OR REPLACE VIEW gtfs_2015.cube_node_string AS
+SELECT
+	sorted_intersection.route_id,
+	sorted_intersection.direction_id,
+	string_agg(sorted_intersection.intersection_id::text, ', ') AS nodes_agg
+FROM
+	(
+		SELECT uni.route_id, uni.direction_id, uni.cube_node_id AS intersection_id
+		FROM (
+			SELECT DISTINCT ON (stops.route_id, stops.direction_id, stops.cube_node_id) *
+			FROM (
+				SELECT
+					rep_trip.route_id,
+					rep_trip.direction_id,
+					scn.cube_node_id,
+					stop_sequence
+				FROM (
+					SELECT DISTINCT ON (common_routes.route_id, common_routes.direction_id)
+						common_routes.route_id,
+						common_routes.direction_id,
+						trips.trip_id,
+						line_length.lin AS line_len
+					FROM gtfs_2015.common_routes AS common_routes
+					JOIN gtfs_2015.trips AS trips
+						ON trips.route_id = common_routes.route_id AND
+						trips.direction_id = common_routes.direction_id
+					JOIN (
+						SELECT v.shape_id,
+							ST_Length(ST_MakeLine(v.pt)) AS lin
+						FROM (
+							SELECT
+								shapes.shape_id,
+								shapes.geom AS pt
+							FROM gtfs_2015.shapes AS shapes
+							ORDER BY shapes.shape_id, shapes.shape_pt_sequence
+						) AS v
+						GROUP BY v.shape_id
+					) AS line_length
+						ON line_length.shape_id = trips.shape_id
+					ORDER BY
+						common_routes.route_id,
+						common_routes.direction_id,
+						line_length.lin DESC
+				) rep_trip
+				JOIN gtfs_2015.stop_times AS stop_times
+					ON stop_times.trip_id = rep_trip.trip_id
+				JOIN gtfs_2015.stop_cube_node AS scn
+					ON scn.stop_id = stop_times.stop_id
+				-- WHERE route_id = 'TEAL'
+				ORDER BY route_id, direction_id, stop_sequence
+			) AS stops
+		) AS uni
+		ORDER BY route_id, direction_id, stop_sequence
+	) AS sorted_intersection
+GROUP BY sorted_intersection.route_id, sorted_intersection.direction_id
 
 
 -- Matt's query
@@ -376,6 +512,7 @@ GROUP BY sorted_intersection.route_id, sorted_intersection.direction_id
 -- 				ON cr.route_id = t.route_id
 -- 		GROUP BY t.route_id, t.shape_id, t.direction_id
 -- 	) AS grouped
+-- JOIN
 -- ORDER BY shape_count) AS ordered
 
 
