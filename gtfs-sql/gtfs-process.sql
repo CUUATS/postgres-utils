@@ -486,7 +486,10 @@ FROM
 					) AS line_length
 						ON line_length.shape_id = trips.shape_id
 					WHERE trip_id NOT LIKE '%NO%' AND
-						trip_id <> '[@14.0.51709152@][3][1278100832750]/0__G5_MF'
+						trip_id <> '[@14.0.51709152@][3][1278100832750]/0__G5_MF' AND
+						trip_id <> '[@2.0.80545657@][31][1433171304976]/0__7E_SHOW#1_WED' AND
+						trip_id <> '[@36.0.28511750@][1][1175200064861]/1__3N#3_SHOW_WED' AND
+						trip_id <> '[@36.0.28511750@][2][1175200035939]/0__SV4_SCHUIMF'
 					ORDER BY
 						common_routes.route_id,
 						common_routes.direction_id,
@@ -505,7 +508,7 @@ GROUP BY sorted_intersection.route_id, sorted_intersection.direction_id, sorted_
 
 
 -------
-
+DROP MATERIALIZED VIEW gtfs_2015.cube_node_string;
 CREATE MATERIALIZED VIEW gtfs_2015.cube_node_string AS
 SELECT
 	seq_node.route_id,
