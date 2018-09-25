@@ -488,8 +488,12 @@ FROM
 					WHERE trip_id NOT LIKE '%NO%' AND
 						trip_id <> '[@14.0.51709152@][3][1278100832750]/0__G5_MF' AND
 						trip_id <> '[@2.0.80545657@][31][1433171304976]/0__7E_SHOW#1_WED' AND
+						trip_id <> '[@36.0.28511750@][1][1175200064861]/1__3N#3_SHOW' AND
+						trip_id <> '[@14.0.56289853@][1][1313082941180]/0__GN3_SCHMF' AND
+						trip_id <> '[@14.0.56289853@][2][1314643979349]/0__SV4_SCH_WED' AND
 						trip_id <> '[@36.0.28511750@][1][1175200064861]/1__3N#3_SHOW_WED' AND
-						trip_id <> '[@36.0.28511750@][2][1175200035939]/0__SV4_SCHUIMF'
+						trip_id <> '[@36.0.28511750@][2][1175200035939]/0__SV4_SCHUIMF' AND
+						trip_id <> '[@2.0.80545657@][31][1433171304976]/0__7E/5E_SHOW_SCH'
 					ORDER BY
 						common_routes.route_id,
 						common_routes.direction_id,
