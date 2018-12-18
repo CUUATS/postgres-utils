@@ -18,5 +18,6 @@ PostGIS.
 
 
 ## Steps to process the GTFS data for Cube modeling
-1. Replace the schema name in the sql
-2. Copy and paste the sql from gtfs-process.sql into the Query Tool and Run
+1. Replace the schema name in the sq
+2. Import the nodes that will be used in cube modeling
+3. Copy and paste the sql from gtfs-process.sql into the Query Tool and Run
